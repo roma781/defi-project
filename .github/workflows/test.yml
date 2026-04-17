@@ -1,0 +1,90 @@
+name: SmartContract
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+    branches: [master]
+
+env:
+  FOUNDRY_PROFILE: default
+  MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Show Foundry version
+        run: forge --version
+
+      - name: Install dependencies
+        run: forge install
+
+      - name: Compile contracts
+        run: forge build --sizes
+
+      - name: Run unit and fuzz tests
+        run: forge test -vvv --no-match-test "Fork"
+
+      - name: Run fork tests
+        run: forge test -vvv --match-test "Fork"
+        env:
+          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+        continue-on-error: true
+
+      - name: Generate gas report
+        run: forge test --gas-report --no-match-test "Fork" > gas-report.txt 2>&1 || true
+
+      - name: Upload gas report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-report
+          path: gas-report.txt
+
+      - name: Run coverage
+        run: forge coverage --no-match-test "Fork" --report lcov || true
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: lcov.info
+
+  slither:
+    name: Slither Static Analysis
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Install dependencies
+        run: forge install
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        with:
+          target: "src/"
+          slither-args: "--exclude-dependencies --exclude-informational"
+          fail-on: high
+        continue-on-error: true
